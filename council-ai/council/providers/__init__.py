@@ -30,10 +30,15 @@ def _ensure_registry() -> None:
     except ImportError:
         pass
 
-    # Ollama reuses the openai SDK, so it's available if openai is installed
     try:
         from .ollama_provider import OllamaProvider
         _REGISTRY["ollama"] = OllamaProvider
+    except ImportError:
+        pass
+
+    try:
+        from .openrouter_provider import OpenRouterProvider
+        _REGISTRY["openrouter"] = OpenRouterProvider
     except ImportError:
         pass
 

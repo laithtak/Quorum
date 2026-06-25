@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from council.providers.base import BaseProvider, Message, ProviderConfig
+from council.providers.base import BaseProvider, CompletionResult, Message, ProviderConfig
 from council.counselor import Counselor
+from council.usage import TokenUsage
 
 
 class MockProvider(BaseProvider):
@@ -16,20 +17,31 @@ class MockProvider(BaseProvider):
         config: ProviderConfig | None = None,
         response: str = "Mock response.",
         fail: bool = False,
+        prompt_tokens: int = 10,
+        completion_tokens: int = 20,
     ) -> None:
         cfg = config or ProviderConfig(provider="mock", model="mock-v1")
         super().__init__(cfg)
         self._response = response
         self._fail = fail
+        self._prompt_tokens = prompt_tokens
+        self._completion_tokens = completion_tokens
         self.call_count = 0
         self.last_messages: list[Message] = []
 
-    async def complete(self, messages: list[Message]) -> str:
+    async def complete(self, messages: list[Message]) -> CompletionResult:
         self.call_count += 1
         self.last_messages = messages
         if self._fail:
             raise RuntimeError("Simulated provider failure")
-        return self._response
+        usage = TokenUsage(
+            prompt_tokens=self._prompt_tokens,
+            completion_tokens=self._completion_tokens,
+            total_tokens=self._prompt_tokens + self._completion_tokens,
+            estimated_cost_usd=0.001,
+            model=self.config.model,
+        )
+        return CompletionResult(text=self._response, usage=usage)
 
 
 @pytest.fixture

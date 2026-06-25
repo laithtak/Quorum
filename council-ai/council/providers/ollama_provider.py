@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from openai import AsyncOpenAI
 
-from .base import BaseProvider, Message, ProviderConfig
+from ..usage import TokenUsage, usage_from_openai_response
+from .base import BaseProvider, CompletionResult, Message, ProviderConfig
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434/v1"
 
@@ -21,14 +22,19 @@ class OllamaProvider(BaseProvider):
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         base_url = config.base_url or DEFAULT_OLLAMA_URL
-        # Ollama doesn't need a real key but the client requires one
         self._client = AsyncOpenAI(base_url=base_url, api_key="ollama")
 
-    async def complete(self, messages: list[Message]) -> str:
+    async def complete(self, messages: list[Message]) -> CompletionResult:
         formatted = [{"role": m.role, "content": m.content} for m in messages]
         resp = await self._client.chat.completions.create(
             model=self.config.model,
             messages=formatted,
             temperature=self.config.temperature,
         )
-        return resp.choices[0].message.content or ""
+        text = resp.choices[0].message.content or ""
+        usage = usage_from_openai_response(self.config.model, resp.usage)
+        if usage:
+            usage.estimated_cost_usd = 0.0
+        else:
+            usage = TokenUsage(model=self.config.model, estimated_cost_usd=0.0)
+        return CompletionResult(text=text, usage=usage)

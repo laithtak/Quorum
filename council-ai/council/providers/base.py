@@ -5,6 +5,8 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
 
+from ..usage import TokenUsage
+
 
 @dataclass
 class Message:
@@ -19,13 +21,21 @@ class Message:
 class ProviderConfig:
     """Configuration for an LLM provider."""
 
-    provider: str  # "openai" | "anthropic" | "google" | "ollama"
+    provider: str  # "openai" | "anthropic" | "google" | "ollama" | "openrouter"
     model: str
     api_key: str | None = None
     base_url: str | None = None  # for Ollama or custom endpoints
     temperature: float = 0.7
     max_tokens: int = 1024
     extra: dict = field(default_factory=dict)
+
+
+@dataclass
+class CompletionResult:
+    """Result of a provider completion call."""
+
+    text: str
+    usage: TokenUsage | None = None
 
 
 class BaseProvider(abc.ABC):
@@ -35,8 +45,8 @@ class BaseProvider(abc.ABC):
         self.config = config
 
     @abc.abstractmethod
-    async def complete(self, messages: list[Message]) -> str:
-        """Send messages and return the assistant response text."""
+    async def complete(self, messages: list[Message]) -> CompletionResult:
+        """Send messages and return the assistant response."""
         ...
 
     @property

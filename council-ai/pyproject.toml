@@ -4,15 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "council-ai"
-version = "0.1.0"
-description = "Multi-model AI deliberation framework — models discuss before they respond."
+version = "1.0.0"
+description = "Quorum — multi-model AI deliberation framework"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "Laith AlKhdour" }]
-keywords = ["ai", "llm", "multi-model", "deliberation", "council"]
+keywords = ["ai", "llm", "multi-model", "deliberation", "quorum", "council"]
+
+[project.urls]
+Homepage = "https://github.com/laithtak/Quorum"
+Repository = "https://github.com/laithtak/Quorum"
+Issues = "https://github.com/laithtak/Quorum/issues"
+Changelog = "https://github.com/laithtak/Quorum/blob/main/CHANGELOG.md"
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -36,6 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 yaml = ["pyyaml>=6.0"]
+web = ["fastapi>=0.110.0", "uvicorn[standard]>=0.27.0", "websockets>=12.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4.0"]
 
 [project.scripts]

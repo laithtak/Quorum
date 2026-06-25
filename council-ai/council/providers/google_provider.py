@@ -5,7 +5,8 @@ from __future__ import annotations
 from google import genai
 from google.genai import types
 
-from .base import BaseProvider, Message, ProviderConfig
+from ..usage import TokenUsage, calculate_cost
+from .base import BaseProvider, CompletionResult, Message, ProviderConfig
 
 
 class GoogleProvider(BaseProvider):
@@ -15,7 +16,7 @@ class GoogleProvider(BaseProvider):
         super().__init__(config)
         self._client = genai.Client(api_key=config.api_key)
 
-    async def complete(self, messages: list[Message]) -> str:
+    async def complete(self, messages: list[Message]) -> CompletionResult:
         system_text = ""
         contents = []
         for m in messages:
@@ -37,4 +38,16 @@ class GoogleProvider(BaseProvider):
             contents=contents,
             config=config,
         )
-        return resp.text or ""
+        text = resp.text or ""
+        usage = None
+        if resp.usage_metadata:
+            prompt = resp.usage_metadata.prompt_token_count or 0
+            completion = resp.usage_metadata.candidates_token_count or 0
+            usage = TokenUsage(
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                total_tokens=prompt + completion,
+                estimated_cost_usd=calculate_cost(self.config.model, prompt, completion),
+                model=self.config.model,
+            )
+        return CompletionResult(text=text, usage=usage)

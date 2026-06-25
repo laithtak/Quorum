@@ -2,11 +2,19 @@
   <img src="quorum-header.png" alt="Quorum — Models deliberate together" width="100%"/>
 </p>
 
-# 🏛️ Council AI
+[![CI](https://github.com/laithtak/Quorum/actions/workflows/ci.yml/badge.svg)](https://github.com/laithtak/Quorum/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-**Multi-model deliberation framework — AI models discuss before they respond.**
+# Quorum
 
-Instead of asking one model and hoping for the best, Council AI assembles a panel of AI counselors that **debate, challenge, and refine** each other's reasoning across multiple rounds before producing a single, synthesized response.
+**Multi-model deliberation framework — models debate before they respond.**
+
+*Models deliberate together before they respond.*
+
+Instead of asking one model and hoping for the best, Quorum assembles a panel of AI counselors that **debate, challenge, and refine** each other's reasoning across multiple rounds before producing a single, synthesized response.
+
+> **Note:** The CLI command is `council` and the PyPI package is `council-ai`. The Python import is `council`. These names are stable for v1.0.
 
 ```
 You → "How should I architect a real-time fraud detection system?"
@@ -38,8 +46,13 @@ You → "How should I architect a real-time fraud detection system?"
 ### Install
 
 ```bash
+pip install council-ai
+# or from source:
+cd council-ai
 pip install -e .
 ```
+
+For web UI support: `pip install -e ".[web]"` (from `council-ai/`)
 
 ### Option 1: CLI — One-liner
 
@@ -63,14 +76,26 @@ council ask "Explain transformers simply" \
 council ask "Design a microservices architecture" --config examples/mixed_providers.json
 ```
 
-### Option 3: Interactive chat
+### Option 3: Interactive chat (with memory)
 
 ```bash
 council chat --config examples/mixed_providers.json
 council chat --models llama3.1,mistral,qwen2 --provider ollama
+council chat --pack debate --models gpt-4o --provider openai
 ```
 
-### Option 4: Python SDK
+Chat sessions use **conversation memory** with rolling summarization so follow-up questions retain context.
+
+### Option 4: Persona packs
+
+```bash
+council packs
+council ask "Should we adopt microservices?" --pack debate --models gpt-4o --provider openai
+```
+
+Available packs: `debate`, `code_review`, `research`, `product`, `brainstorm`.
+
+### Option 5: Python SDK
 
 ```python
 import asyncio
@@ -90,7 +115,7 @@ asyncio.run(main())
 
 ## Configuration
 
-Council AI uses JSON or YAML config files. API keys can reference environment variables with `${VAR_NAME}` syntax.
+Quorum uses JSON or YAML config files. API keys can reference environment variables with `${VAR_NAME}` syntax.
 
 ```json
 {
@@ -133,8 +158,46 @@ Council AI uses JSON or YAML config files. API keys can reference environment va
 | `anthropic` | Claude Sonnet, Opus, Haiku | Yes |
 | `google` | Gemini 2.5 Flash/Pro | Yes |
 | `ollama` | Llama 3.1, Mistral, Qwen, Phi, etc. | No (local) |
+| `openrouter` | 100+ models via unified API | Yes |
 
 > Any OpenAI-compatible API (vLLM, LiteLLM, Together AI) works with the `openai` provider — just set `base_url`.
+
+### Token usage & cost
+
+Both `ask` and `chat` print a usage table after deliberation. Suppress with `--no-usage`.
+
+### Synthesis strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `single` / `last-round` | Designated counselor synthesizes (default) |
+| `voting` | Counselors vote on the best last-round response |
+| `consensus` | Extra round if no consensus detected |
+| `ranked` | Borda-count ranking of responses |
+
+### Middleware
+
+Optional middleware in config:
+
+```json
+"middleware": [
+  {"type": "logging"},
+  {"type": "retry", "max_retries": 3, "backoff": 1.5},
+  {"type": "cache", "backend": "memory"}
+]
+```
+
+### Web UI
+
+```bash
+cd web
+docker compose up
+```
+
+- API: http://localhost:8000
+- Frontend: http://localhost:3000
+
+Configure counselors, stream deliberation in real time, and export/import JSON config.
 
 ### Settings
 
@@ -273,48 +336,50 @@ council chat --models llama3.1,mistral,qwen2 --provider ollama
 ## Project Structure
 
 ```
-council-ai/
-├── council/
-│   ├── __init__.py          # Public API
-│   ├── cli.py               # Typer CLI
-│   ├── config.py            # Config loading (JSON/YAML)
-│   ├── counselor.py         # Counselor class
-│   ├── orchestrator.py      # Deliberation engine
-│   └── providers/
-│       ├── __init__.py      # Provider registry
-│       ├── base.py          # Abstract provider interface
-│       ├── openai_provider.py
-│       ├── anthropic_provider.py
-│       ├── google_provider.py
-│       └── ollama_provider.py
-├── examples/
-│   ├── mixed_providers.json # Cloud API config
-│   ├── local_ollama.json    # Local-only config
-│   └── basic_usage.py       # Python SDK examples
-├── pyproject.toml
-├── LICENSE
+Quorum/                     # repo root
+├── council-ai/             # Python package (pip install -e council-ai)
+│   ├── council/
+│   │   ├── memory.py       # Conversation memory
+│   │   ├── usage.py        # Token/cost tracking
+│   │   ├── synthesis.py    # Synthesis engines
+│   │   ├── middleware/     # Logging, retry, cache, rate limit
+│   │   ├── packs/          # Persona packs
+│   │   └── providers/      # openai, anthropic, google, ollama, openrouter
+│   ├── examples/
+│   └── tests/
+├── web/                    # FastAPI + React UI
+├── Dockerfile              # CLI container image
 └── README.md
 ```
 
 ## Roadmap
 
-- [ ] Web UI (FastAPI + React)
-- [ ] Voting-based synthesis (majority wins)
+- [x] Web UI (FastAPI + React)
+- [x] Voting-based synthesis
+- [x] Conversation memory across queries
+- [x] Token usage tracking and cost estimation
+- [x] Pre-built persona packs
+- [x] Middleware hooks (logging, rate limiting, caching)
 - [ ] Confidence scoring per counselor
-- [ ] Conversation memory across queries
-- [ ] Token usage tracking and cost estimation
-- [ ] YAML config support
-- [ ] Pre-built persona packs (Debate Team, Code Review Panel, etc.)
-- [ ] Middleware hooks (logging, rate limiting, caching)
+- [ ] YAML config support (install `pyyaml`)
+
+## Open Source
+
+Quorum is released under the [MIT License](LICENSE).
+
+- **Contributing:** See [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Code of Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Security:** Report vulnerabilities via [SECURITY.md](SECURITY.md) or [GitHub Security Advisories](https://github.com/laithtak/Quorum/security/advisories/new)
+- **Issues & discussions:** [Issues](https://github.com/laithtak/Quorum/issues) · [Discussions](https://github.com/laithtak/Quorum/discussions)
 
 ## Contributing
 
-Contributions welcome. Fork, branch, PR. Run `ruff check` before submitting.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run from `council-ai/`:
 
 ```bash
 pip install -e ".[dev]"
-ruff check council/
-pytest
+ruff check council/ tests/
+pytest tests/ -v
 ```
 
 ## License

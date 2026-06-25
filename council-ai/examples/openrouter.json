@@ -1,0 +1,26 @@
+{
+  "settings": {
+    "rounds": 2,
+    "synthesis": "single"
+  },
+  "counselors": [
+    {
+      "name": "Atlas",
+      "provider": "openrouter",
+      "model": "openai/gpt-4o",
+      "api_key": "${OPENROUTER_API_KEY}"
+    },
+    {
+      "name": "Sage",
+      "provider": "openrouter",
+      "model": "anthropic/claude-3.5-sonnet",
+      "api_key": "${OPENROUTER_API_KEY}"
+    },
+    {
+      "name": "Nova",
+      "provider": "openrouter",
+      "model": "google/gemini-2.0-flash-001",
+      "api_key": "${OPENROUTER_API_KEY}"
+    }
+  ]
+}

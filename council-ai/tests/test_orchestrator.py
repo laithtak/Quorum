@@ -2,7 +2,8 @@
 
 import pytest
 
-from council.orchestrator import Orchestrator, TurnRecord
+from council.orchestrator import Orchestrator
+from council.models import TurnRecord
 
 
 @pytest.mark.asyncio

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from .providers.base import BaseProvider, Message
+from .providers.base import BaseProvider, CompletionResult, Message
+from .usage import TokenUsage
+
+if TYPE_CHECKING:
+    from .middleware import MiddlewareStack
 
 
 DEFAULT_PERSONA = (
@@ -24,6 +29,8 @@ class Counselor:
     provider: BaseProvider
     persona: str = DEFAULT_PERSONA
     _history: list[Message] = field(default_factory=list, repr=False)
+    _usage: TokenUsage = field(default_factory=TokenUsage, repr=False)
+    middleware: MiddlewareStack | None = field(default=None, repr=False)
 
     @property
     def label(self) -> str:
@@ -35,9 +42,36 @@ class Counselor:
             Message(role="system", content=self._build_system_prompt()),
             *discussion,
         ]
-        response = await self.provider.complete(messages)
-        self._history.append(Message(role="assistant", content=response, name=self.name))
-        return response
+
+        async def _complete() -> CompletionResult:
+            return await self.provider.complete(messages)
+
+        if self.middleware:
+            result = await self.middleware.run_complete(
+                _complete,
+                counselor_name=self.name,
+                model=self.provider.model_name,
+                provider_name=self.provider.provider_name,
+                messages=messages,
+            )
+        else:
+            result = await _complete()
+
+        if result.usage:
+            self._usage = self._usage + result.usage
+
+        self._history.append(
+            Message(role="assistant", content=result.text, name=self.name)
+        )
+        return result.text
+
+    def get_usage(self) -> TokenUsage | None:
+        if self._usage.total_tokens == 0 and self._usage.estimated_cost_usd == 0:
+            return self._usage if self._usage.prompt_tokens else None
+        return self._usage
+
+    def reset_usage(self) -> None:
+        self._usage = TokenUsage()
 
     def _build_system_prompt(self) -> str:
         return (

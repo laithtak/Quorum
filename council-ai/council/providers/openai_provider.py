@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from openai import AsyncOpenAI
 
-from .base import BaseProvider, Message, ProviderConfig
+from ..usage import usage_from_openai_response
+from .base import BaseProvider, CompletionResult, Message, ProviderConfig
 
 
 class OpenAIProvider(BaseProvider):
@@ -19,7 +20,7 @@ class OpenAIProvider(BaseProvider):
             kwargs["base_url"] = config.base_url
         self._client = AsyncOpenAI(**kwargs)
 
-    async def complete(self, messages: list[Message]) -> str:
+    async def complete(self, messages: list[Message]) -> CompletionResult:
         formatted = [{"role": m.role, "content": m.content} for m in messages]
         resp = await self._client.chat.completions.create(
             model=self.config.model,
@@ -27,4 +28,6 @@ class OpenAIProvider(BaseProvider):
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
         )
-        return resp.choices[0].message.content or ""
+        text = resp.choices[0].message.content or ""
+        usage = usage_from_openai_response(self.config.model, resp.usage)
+        return CompletionResult(text=text, usage=usage)

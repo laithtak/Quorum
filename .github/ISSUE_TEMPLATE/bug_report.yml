@@ -1,0 +1,94 @@
+name: Bug Report
+description: Report a bug in Quorum
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as you can.
+
+  - type: input
+    id: version
+    attributes:
+      label: Quorum / council-ai version
+      description: Output of `council --version` or version from `pip show council-ai`
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: How are you running Quorum?
+      options:
+        - CLI (`council ask` / `council chat`)
+        - Python SDK
+        - Web UI
+        - Docker
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider(s) and model(s)
+      description: e.g. openai/gpt-4o, ollama/llama3.1
+      placeholder: "openai/gpt-4o, anthropic/claude-sonnet-4-6"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the issue
+      placeholder: |
+        1. Run `council ask "..." --models ...`
+        2. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: Paste relevant terminal output (redact API keys)
+      render: shell
+
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python version
+      options:
+        - "3.10"
+        - "3.11"
+        - "3.12"
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other

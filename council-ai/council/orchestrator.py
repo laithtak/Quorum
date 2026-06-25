@@ -9,37 +9,31 @@ from enum import Enum
 from typing import AsyncIterator
 
 from .counselor import Counselor
+from .memory import ConversationMemory
+from .middleware import MiddlewareStack
 from .providers.base import Message
+from .models import TurnRecord
+from .synthesis import SYNTHESIS_PROMPT, SynthesisEngine, SingleSynthesizer
+from .usage import CounselorUsage
 
 logger = logging.getLogger("council")
+
+# Re-export TurnRecord for backward compatibility
+__all__ = [
+    "Orchestrator",
+    "SynthesisStrategy",
+    "DeliberationResult",
+    "TurnRecord",
+    "SYNTHESIS_PROMPT",
+]
 
 
 class SynthesisStrategy(str, Enum):
     """How the final answer is produced after deliberation."""
 
-    LAST_ROUND = "last-round"          # Dedicated synthesis by one counselor
-    DESIGNATED = "designated"          # A specific counselor always synthesizes
-    ROTATING = "rotating"              # Rotate who synthesizes each query
-
-
-SYNTHESIS_PROMPT = (
-    "The council has finished deliberating. "
-    "Synthesize the discussion into a single, clear, final response for the user. "
-    "Incorporate the strongest points from all counselors. "
-    "Resolve any disagreements by choosing the best-supported position. "
-    "Do NOT mention the council, the deliberation process, or individual counselors — "
-    "respond as if you are giving the user a direct answer."
-)
-
-
-@dataclass
-class TurnRecord:
-    """Record of a single counselor's turn in the deliberation."""
-
-    counselor_name: str
-    model: str
-    round: int
-    content: str
+    LAST_ROUND = "last-round"
+    DESIGNATED = "designated"
+    ROTATING = "rotating"
 
 
 @dataclass
@@ -50,6 +44,8 @@ class DeliberationResult:
     turns: list[TurnRecord] = field(default_factory=list)
     final_response: str = ""
     rounds_completed: int = 0
+    usage: list[CounselorUsage] = field(default_factory=list)
+    total_cost_usd: float = 0.0
 
     @property
     def transcript(self) -> str:
@@ -80,6 +76,9 @@ class Orchestrator:
         synthesis: SynthesisStrategy = SynthesisStrategy.LAST_ROUND,
         synthesizer_index: int = 0,
         parallel_within_round: bool = False,
+        memory: ConversationMemory | None = None,
+        middleware: MiddlewareStack | None = None,
+        synthesis_engine: SynthesisEngine | None = None,
     ) -> None:
         if not counselors:
             raise ValueError("Council needs at least one counselor.")
@@ -91,11 +90,49 @@ class Orchestrator:
         self.synthesis = synthesis
         self.synthesizer_index = synthesizer_index
         self.parallel_within_round = parallel_within_round
+        self.memory = memory
+        self.middleware = middleware
+        self.synthesis_engine = synthesis_engine or SingleSynthesizer(
+            synthesizer_index=synthesizer_index
+        )
+
+        if middleware:
+            for counselor in self.counselors:
+                counselor.middleware = middleware
+
+    def _build_discussion(self, query: str) -> list[Message]:
+        if self.memory:
+            return self.memory.get_context() + [Message(role="user", content=query)]
+        return [Message(role="user", content=query)]
+
+    def _aggregate_usage(self) -> tuple[list[CounselorUsage], float]:
+        usage_list: list[CounselorUsage] = []
+        total_cost = 0.0
+        for counselor in self.counselors:
+            u = counselor.get_usage()
+            if u and (u.total_tokens > 0 or u.estimated_cost_usd > 0):
+                usage_list.append(
+                    CounselorUsage(
+                        counselor_name=counselor.name,
+                        model=counselor.provider.model_name,
+                        usage=u,
+                    )
+                )
+                total_cost += u.estimated_cost_usd
+        return usage_list, total_cost
+
+    def _reset_usage(self) -> None:
+        for counselor in self.counselors:
+            counselor.reset_usage()
 
     async def deliberate(self, query: str) -> DeliberationResult:
         """Run the full deliberation and return the result."""
+        self._reset_usage()
         result = DeliberationResult(query=query)
-        discussion: list[Message] = [Message(role="user", content=query)]
+        discussion = self._build_discussion(query)
+
+        if self.middleware:
+            await self.middleware.before_deliberation(query, self.counselors)
 
         for round_num in range(1, self.rounds + 1):
             if self.parallel_within_round:
@@ -117,14 +154,33 @@ class Orchestrator:
 
             result.rounds_completed = round_num
 
-        # Synthesis
-        result.final_response = await self._synthesize(discussion)
+        final, extra_turns = await self.synthesis_engine.synthesize(
+            self.counselors, discussion, result.turns
+        )
+        result.turns.extend(extra_turns)
+        result.final_response = final
+
+        usage_list, total_cost = self._aggregate_usage()
+        result.usage = usage_list
+        result.total_cost_usd = total_cost
+
+        if self.memory:
+            self.memory.add_exchange(query, result.final_response)
+
+        if self.middleware:
+            await self.middleware.after_deliberation(query, result)
+
         return result
 
     async def deliberate_stream(self, query: str) -> AsyncIterator[TurnRecord | str]:
         """Stream turns as they happen. Yields TurnRecords during deliberation,
         then yields the final response string."""
-        discussion: list[Message] = [Message(role="user", content=query)]
+        self._reset_usage()
+        discussion = self._build_discussion(query)
+        turns: list[TurnRecord] = []
+
+        if self.middleware:
+            await self.middleware.before_deliberation(query, self.counselors)
 
         for round_num in range(1, self.rounds + 1):
             if self.parallel_within_round:
@@ -139,12 +195,34 @@ class Orchestrator:
                     round=round_num,
                     content=response,
                 )
+                turns.append(turn)
                 discussion.append(
                     Message(role="assistant", content=f"[{counselor.name}]: {response}")
                 )
                 yield turn
 
-        final = await self._synthesize(discussion)
+        final, extra_turns = await self.synthesis_engine.synthesize(
+            self.counselors, discussion, turns
+        )
+        for turn in extra_turns:
+            turns.append(turn)
+            yield turn
+
+        if self.memory:
+            self.memory.add_exchange(query, final)
+
+        if self.middleware:
+            result = DeliberationResult(
+                query=query,
+                turns=turns,
+                final_response=final,
+                rounds_completed=self.rounds,
+            )
+            usage_list, total_cost = self._aggregate_usage()
+            result.usage = usage_list
+            result.total_cost_usd = total_cost
+            await self.middleware.after_deliberation(query, result)
+
         yield final
 
     async def _run_round_sequential(
@@ -158,7 +236,9 @@ class Orchestrator:
             try:
                 response = await counselor.respond(current_discussion)
             except Exception as exc:
-                logger.warning("Counselor %s failed in round %d: %s", counselor.name, round_num, exc)
+                logger.warning(
+                    "Counselor %s failed in round %d: %s", counselor.name, round_num, exc
+                )
                 response = f"[{counselor.name} was unable to respond this round.]"
             results.append((counselor, response))
             current_discussion.append(
@@ -175,17 +255,10 @@ class Orchestrator:
         results: list[tuple[Counselor, str]] = []
         for counselor, resp in zip(self.counselors, raw):
             if isinstance(resp, Exception):
-                logger.warning("Counselor %s failed in round %d: %s", counselor.name, round_num, resp)
+                logger.warning(
+                    "Counselor %s failed in round %d: %s", counselor.name, round_num, resp
+                )
                 results.append((counselor, f"[{counselor.name} was unable to respond this round.]"))
             else:
                 results.append((counselor, resp))
         return results
-
-    async def _synthesize(self, discussion: list[Message]) -> str:
-        """Produce the final synthesized response."""
-        synthesizer = self.counselors[self.synthesizer_index % len(self.counselors)]
-
-        synthesis_messages = list(discussion) + [
-            Message(role="user", content=SYNTHESIS_PROMPT)
-        ]
-        return await synthesizer.respond(synthesis_messages)
