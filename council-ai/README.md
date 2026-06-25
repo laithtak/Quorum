@@ -299,9 +299,9 @@ council-ai/
 - [ ] Confidence scoring per counselor
 - [ ] Conversation memory across queries
 - [ ] Token usage tracking and cost estimation
-- [ ] YAML config support
 - [ ] Pre-built persona packs (Debate Team, Code Review Panel, etc.)
 - [ ] Middleware hooks (logging, rate limiting, caching)
+- [ ] OpenRouter provider (single key, many models)
 
 ## Contributing
 

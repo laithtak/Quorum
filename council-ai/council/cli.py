@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.text import Text
 
 from .config import build_quick, load_config
 from .orchestrator import TurnRecord
+
+load_dotenv()  # Load .env before anything touches os.environ
 
 app = typer.Typer(
     name="council",

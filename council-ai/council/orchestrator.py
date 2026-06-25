@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import AsyncIterator
 
 from .counselor import Counselor
 from .providers.base import Message
+
+logger = logging.getLogger("council")
 
 
 class SynthesisStrategy(str, Enum):
@@ -152,7 +155,11 @@ class Orchestrator:
         current_discussion = list(discussion)
 
         for counselor in self.counselors:
-            response = await counselor.respond(current_discussion)
+            try:
+                response = await counselor.respond(current_discussion)
+            except Exception as exc:
+                logger.warning("Counselor %s failed in round %d: %s", counselor.name, round_num, exc)
+                response = f"[{counselor.name} was unable to respond this round.]"
             results.append((counselor, response))
             current_discussion.append(
                 Message(role="assistant", content=f"[{counselor.name}]: {response}")
@@ -164,8 +171,15 @@ class Orchestrator:
     ) -> list[tuple[Counselor, str]]:
         """All counselors respond simultaneously (they see the same context)."""
         tasks = [counselor.respond(list(discussion)) for counselor in self.counselors]
-        responses = await asyncio.gather(*tasks)
-        return list(zip(self.counselors, responses))
+        raw = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[tuple[Counselor, str]] = []
+        for counselor, resp in zip(self.counselors, raw):
+            if isinstance(resp, Exception):
+                logger.warning("Counselor %s failed in round %d: %s", counselor.name, round_num, resp)
+                results.append((counselor, f"[{counselor.name} was unable to respond this round.]"))
+            else:
+                results.append((counselor, resp))
+        return results
 
     async def _synthesize(self, discussion: list[Message]) -> str:
         """Produce the final synthesized response."""
