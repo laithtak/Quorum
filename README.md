@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="quorum-header.png" alt="Quorum — Models deliberate together" width="100%"/>
+</p>
+
 # 🏛️ Council AI
 
 **Multi-model deliberation framework — AI models discuss before they respond.**
