@@ -57,11 +57,17 @@ For web UI support: `pip install -e ".[web]"` (from `council-ai/`)
 ### Option 1: CLI — One-liner
 
 ```bash
-# With cloud models
+# With cloud models (fixed rounds)
 council ask "What's the best database for time-series data?" \
   --models gpt-4o,gpt-4o-mini \
   --provider openai \
   --rounds 2
+
+# Until counselors agree (safety cap default 50)
+council ask "Should we adopt microservices?" \
+  --models gpt-4o,gpt-4o-mini \
+  --provider openai \
+  --until-consensus --max-rounds 10
 
 # With local models (Ollama)
 council ask "Explain transformers simply" \
@@ -115,12 +121,14 @@ asyncio.run(main())
 
 ## Configuration
 
-Quorum uses JSON or YAML config files. API keys can reference environment variables with `${VAR_NAME}` syntax.
+Quorum uses JSON or YAML config files. **API keys are read only from `.env`** — not from config files. Copy `.env.example` to `.env` and add the keys for providers you use.
 
 ```json
 {
   "settings": {
     "rounds": 2,
+    "until_consensus": false,
+    "max_rounds": 50,
     "synthesis": "last-round",
     "parallel": false
   },
@@ -129,7 +137,6 @@ Quorum uses JSON or YAML config files. API keys can reference environment variab
       "name": "Atlas",
       "provider": "openai",
       "model": "gpt-4o",
-      "api_key": "${OPENAI_API_KEY}",
       "temperature": 0.7,
       "persona": "You are a rigorous analytical thinker."
     },
@@ -137,7 +144,6 @@ Quorum uses JSON or YAML config files. API keys can reference environment variab
       "name": "Sage",
       "provider": "anthropic",
       "model": "claude-sonnet-4-6",
-      "api_key": "${ANTHROPIC_API_KEY}",
       "persona": "You focus on nuance, edge cases, and ethics."
     },
     {
@@ -149,6 +155,15 @@ Quorum uses JSON or YAML config files. API keys can reference environment variab
   ]
 }
 ```
+
+### Deliberation modes
+
+| Mode | Config / CLI | Behavior |
+|------|--------------|----------|
+| Fixed (default) | `"rounds": 5` or `--rounds 5` | Exactly 5 rounds, then synthesize |
+| Until consensus | `"until_consensus": true` or `--until-consensus` | Loop until the judge agrees or `max_rounds` is hit |
+
+Use `"synthesis": "single"` (default when `until_consensus` is true) with until-consensus mode. CLI flags override config file settings.
 
 ### Supported Providers
 
@@ -203,7 +218,9 @@ Configure counselors, stream deliberation in real time, and export/import JSON c
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `rounds` | `2` | Number of deliberation rounds |
+| `rounds` | `2` | Fixed mode: exact number of deliberation rounds |
+| `until_consensus` | `false` | Loop until counselors agree (ignores `rounds` for looping) |
+| `max_rounds` | `50` | Safety cap when `until_consensus` is true |
 | `synthesis` | `last-round` | How the final answer is produced |
 | `synthesizer_index` | `0` | Which counselor synthesizes (index into counselors array) |
 | `parallel` | `false` | Run counselors in parallel within each round |
@@ -213,10 +230,9 @@ Configure counselors, stream deliberation in real time, and export/import JSON c
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | No | Display name (auto-generated if omitted) |
-| `provider` | Yes | `openai`, `anthropic`, `google`, or `ollama` |
+| `provider` | Yes | `openai`, `anthropic`, `google`, `ollama`, or `openrouter` |
 | `model` | Yes | Model identifier |
-| `api_key` | Depends | API key or `${ENV_VAR}` reference |
-| `base_url` | No | Custom endpoint URL |
+| `base_url` | No | Custom endpoint URL (supports `${ENV_VAR}` for non-secret values) |
 | `temperature` | No | Sampling temperature (default: 0.7) |
 | `max_tokens` | No | Max response tokens (default: 1024) |
 | `persona` | No | System prompt defining this counselor's thinking style |

@@ -17,7 +17,7 @@ class OpenRouterProvider(BaseProvider):
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
-        api_key = config.api_key or os.environ.get("OPENROUTER_API_KEY")
+        api_key = config.api_key
         referer = config.extra.get("http_referer") or os.environ.get(
             "OPENROUTER_HTTP_REFERER", "https://github.com/laithtak/Quorum"
         )

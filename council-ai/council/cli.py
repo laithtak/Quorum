@@ -6,18 +6,18 @@ import asyncio
 from pathlib import Path
 
 import typer
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
 from .config import build_quick, load_config
+from .env_keys import ensure_dotenv_loaded
 from .memory import ConversationMemory
 from .models import TurnRecord
 from .usage import CounselorUsage
 
-load_dotenv()
+ensure_dotenv_loaded()
 
 app = typer.Typer(
     name="council",
@@ -73,6 +73,12 @@ def _print_usage(usage_list: list[CounselorUsage], total_cost: float) -> None:
     console.print(table)
 
 
+def _rounds_banner(orchestrator) -> str:
+    if orchestrator.until_consensus:
+        return f"Mode: until consensus (max {orchestrator.max_rounds})"
+    return f"over {orchestrator.rounds} round(s)"
+
+
 async def _run_session(
     orchestrator,
     query: str,
@@ -82,7 +88,7 @@ async def _run_session(
     if show_deliberation:
         console.print(
             f"\n[dim]Deliberating with {len(orchestrator.counselors)} counselors "
-            f"over {orchestrator.rounds} round(s)...[/dim]\n"
+            f"{_rounds_banner(orchestrator)}...[/dim]\n"
         )
         async for item in orchestrator.deliberate_stream(query):
             if isinstance(item, TurnRecord):
@@ -104,18 +110,31 @@ def _build_orchestrator(
     config: Path | None,
     models: str | None,
     provider: str,
-    rounds: int,
+    rounds: int | None,
     pack: str | None,
+    until_consensus: bool = False,
+    max_rounds: int | None = None,
     memory: ConversationMemory | None = None,
 ):
     if config:
         orch = load_config(config)
     elif models or pack:
         model_list = [m.strip() for m in models.split(",")] if models else ["gpt-4o"]
-        orch = build_quick(model_list, provider=provider, rounds=rounds, pack=pack)
+        orch = build_quick(
+            model_list, provider=provider, rounds=rounds or 2, pack=pack
+        )
     else:
         console.print("[red]Provide --config, --models, or --pack[/red]")
         raise typer.Exit(1)
+
+    if until_consensus:
+        orch.until_consensus = True
+    if max_rounds is not None:
+        orch.max_rounds = max_rounds
+    elif until_consensus:
+        orch.max_rounds = 50
+    if rounds is not None and not until_consensus:
+        orch.rounds = rounds
 
     if memory is not None:
         orch.memory = memory
@@ -131,13 +150,23 @@ def ask(
         help="Comma-separated model names for quick setup.",
     ),
     provider: str = typer.Option("openai", "--provider", "-p", help="Provider for --models."),
-    rounds: int = typer.Option(2, "--rounds", "-r", help="Number of deliberation rounds."),
+    rounds: int | None = typer.Option(
+        None, "--rounds", "-r", help="Number of deliberation rounds (fixed mode)."
+    ),
+    until_consensus: bool = typer.Option(
+        False, "--until-consensus", help="Loop until counselors agree."
+    ),
+    max_rounds: int | None = typer.Option(
+        None, "--max-rounds", help="Safety cap for until-consensus mode (default 50)."
+    ),
     show: bool = typer.Option(True, "--show/--quiet", help="Show deliberation or only final answer."),
     pack: str = typer.Option(None, "--pack", help="Persona pack name (e.g. debate)."),
     no_usage: bool = typer.Option(False, "--no-usage", help="Suppress usage table."),
 ) -> None:
     """Ask the council a question."""
-    orchestrator = _build_orchestrator(config, models, provider, rounds, pack)
+    orchestrator = _build_orchestrator(
+        config, models, provider, rounds, pack, until_consensus, max_rounds
+    )
     asyncio.run(_run_session(orchestrator, query, show, show_usage=not no_usage))
 
 
@@ -149,7 +178,15 @@ def chat(
         help="Comma-separated model names for quick setup.",
     ),
     provider: str = typer.Option("openai", "--provider", "-p", help="Provider for --models."),
-    rounds: int = typer.Option(2, "--rounds", "-r", help="Number of deliberation rounds."),
+    rounds: int | None = typer.Option(
+        None, "--rounds", "-r", help="Number of deliberation rounds (fixed mode)."
+    ),
+    until_consensus: bool = typer.Option(
+        False, "--until-consensus", help="Loop until counselors agree."
+    ),
+    max_rounds: int | None = typer.Option(
+        None, "--max-rounds", help="Safety cap for until-consensus mode (default 50)."
+    ),
     show: bool = typer.Option(True, "--show/--quiet", help="Show deliberation or only final answer."),
     pack: str = typer.Option(None, "--pack", help="Persona pack name (e.g. debate)."),
     no_usage: bool = typer.Option(False, "--no-usage", help="Suppress usage table."),
@@ -157,13 +194,25 @@ def chat(
     """Start an interactive council chat session with conversation memory."""
     memory = ConversationMemory()
     orchestrator = _build_orchestrator(
-        config, models, provider, rounds, pack, memory=memory
+        config,
+        models,
+        provider,
+        rounds,
+        pack,
+        until_consensus,
+        max_rounds,
+        memory=memory,
     )
 
+    rounds_line = (
+        f"Mode: until consensus (max {orchestrator.max_rounds})"
+        if orchestrator.until_consensus
+        else f"Rounds: {orchestrator.rounds}"
+    )
     console.print(Panel(
         "[bold]🏛️  Council AI[/bold]\n"
         f"Counselors: {', '.join(c.label for c in orchestrator.counselors)}\n"
-        f"Rounds: {orchestrator.rounds}\n"
+        f"{rounds_line}\n"
         f"Memory: enabled\n"
         f"Type [bold green]quit[/] or [bold green]exit[/] to leave.",
         border_style="blue",

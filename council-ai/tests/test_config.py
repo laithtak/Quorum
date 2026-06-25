@@ -1,8 +1,11 @@
 """Tests for config loading and provider registry."""
 
+import warnings
+
 import pytest
 
 from council.config import build_from_dict, build_quick, _resolve_env
+from council.env_keys import resolve_api_key
 from council.providers import available_providers
 
 
@@ -21,6 +24,42 @@ def test_resolve_env_plain_string():
 
 def test_resolve_env_none():
     assert _resolve_env(None) is None
+
+
+def test_resolve_api_key_from_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert resolve_api_key("openai") == "sk-test"
+
+
+def test_resolve_api_key_ollama_returns_none():
+    assert resolve_api_key("ollama") is None
+
+
+def test_build_openai_counselor_without_env_raises(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    data = {
+        "counselors": [{"provider": "openai", "model": "gpt-4o"}],
+    }
+    with pytest.raises(ValueError, match="OPENAI_API_KEY not set"):
+        build_from_dict(data)
+
+
+def test_api_key_in_json_is_ignored(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "from-env")
+    data = {
+        "counselors": [
+            {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "api_key": "sk-inline-should-not-be-used",
+            },
+        ],
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        orch = build_from_dict(data)
+    assert any("api_key in config files is ignored" in str(w.message) for w in caught)
+    assert orch.counselors[0].provider.config.api_key == "from-env"
 
 
 def test_build_from_dict_minimal():

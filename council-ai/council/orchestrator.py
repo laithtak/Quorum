@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import AsyncIterator
 
+from .consensus import check_consensus
 from .counselor import Counselor
 from .memory import ConversationMemory
 from .middleware import MiddlewareStack
@@ -73,6 +74,8 @@ class Orchestrator:
         self,
         counselors: list[Counselor],
         rounds: int = 2,
+        until_consensus: bool = False,
+        max_rounds: int = 50,
         synthesis: SynthesisStrategy = SynthesisStrategy.LAST_ROUND,
         synthesizer_index: int = 0,
         parallel_within_round: bool = False,
@@ -82,11 +85,15 @@ class Orchestrator:
     ) -> None:
         if not counselors:
             raise ValueError("Council needs at least one counselor.")
-        if rounds < 1:
+        if not until_consensus and rounds < 1:
             raise ValueError("Need at least 1 round of deliberation.")
+        if until_consensus and max_rounds < 1:
+            raise ValueError("max_rounds must be at least 1 in until-consensus mode.")
 
         self.counselors = counselors
         self.rounds = rounds
+        self.until_consensus = until_consensus
+        self.max_rounds = max_rounds
         self.synthesis = synthesis
         self.synthesizer_index = synthesizer_index
         self.parallel_within_round = parallel_within_round
@@ -125,6 +132,54 @@ class Orchestrator:
         for counselor in self.counselors:
             counselor.reset_usage()
 
+    async def _run_round(
+        self, discussion: list[Message], round_num: int
+    ) -> list[tuple[Counselor, str]]:
+        if self.parallel_within_round:
+            return await self._run_round_parallel(discussion, round_num)
+        return await self._run_round_sequential(discussion, round_num)
+
+    def _append_round_turns(
+        self,
+        responses: list[tuple[Counselor, str]],
+        round_num: int,
+        discussion: list[Message],
+        turns: list[TurnRecord],
+    ) -> None:
+        for counselor, response in responses:
+            turn = TurnRecord(
+                counselor_name=counselor.name,
+                model=counselor.provider.model_name,
+                round=round_num,
+                content=response,
+            )
+            turns.append(turn)
+            discussion.append(
+                Message(role="assistant", content=f"[{counselor.name}]: {response}")
+            )
+
+    async def _maybe_check_consensus(
+        self,
+        discussion: list[Message],
+        round_num: int,
+        turns: list[TurnRecord],
+    ) -> bool:
+        """Return True if deliberation should stop (consensus reached or cap hit)."""
+        judge = self.counselors[self.synthesizer_index % len(self.counselors)]
+        agreed, _verdict, consensus_turn = await check_consensus(
+            judge, discussion, round_num
+        )
+        turns.append(consensus_turn)
+        if agreed:
+            return True
+        if round_num >= self.max_rounds:
+            logger.warning(
+                "Reached max_rounds (%d) without consensus; proceeding to synthesis.",
+                self.max_rounds,
+            )
+            return True
+        return False
+
     async def deliberate(self, query: str) -> DeliberationResult:
         """Run the full deliberation and return the result."""
         self._reset_usage()
@@ -134,25 +189,18 @@ class Orchestrator:
         if self.middleware:
             await self.middleware.before_deliberation(query, self.counselors)
 
-        for round_num in range(1, self.rounds + 1):
-            if self.parallel_within_round:
-                responses = await self._run_round_parallel(discussion, round_num)
-            else:
-                responses = await self._run_round_sequential(discussion, round_num)
-
-            for counselor, response in responses:
-                turn = TurnRecord(
-                    counselor_name=counselor.name,
-                    model=counselor.provider.model_name,
-                    round=round_num,
-                    content=response,
-                )
-                result.turns.append(turn)
-                discussion.append(
-                    Message(role="assistant", content=f"[{counselor.name}]: {response}")
-                )
-
+        round_num = 0
+        while True:
+            round_num += 1
+            responses = await self._run_round(discussion, round_num)
+            self._append_round_turns(responses, round_num, discussion, result.turns)
             result.rounds_completed = round_num
+
+            if self.until_consensus:
+                if await self._maybe_check_consensus(discussion, round_num, result.turns):
+                    break
+            elif round_num >= self.rounds:
+                break
 
         final, extra_turns = await self.synthesis_engine.synthesize(
             self.counselors, discussion, result.turns
@@ -178,16 +226,15 @@ class Orchestrator:
         self._reset_usage()
         discussion = self._build_discussion(query)
         turns: list[TurnRecord] = []
+        rounds_completed = 0
 
         if self.middleware:
             await self.middleware.before_deliberation(query, self.counselors)
 
-        for round_num in range(1, self.rounds + 1):
-            if self.parallel_within_round:
-                responses = await self._run_round_parallel(discussion, round_num)
-            else:
-                responses = await self._run_round_sequential(discussion, round_num)
-
+        round_num = 0
+        while True:
+            round_num += 1
+            responses = await self._run_round(discussion, round_num)
             for counselor, response in responses:
                 turn = TurnRecord(
                     counselor_name=counselor.name,
@@ -200,6 +247,18 @@ class Orchestrator:
                     Message(role="assistant", content=f"[{counselor.name}]: {response}")
                 )
                 yield turn
+
+            rounds_completed = round_num
+
+            if self.until_consensus:
+                agreed_or_cap = await self._maybe_check_consensus(
+                    discussion, round_num, turns
+                )
+                yield turns[-1]
+                if agreed_or_cap:
+                    break
+            elif round_num >= self.rounds:
+                break
 
         final, extra_turns = await self.synthesis_engine.synthesize(
             self.counselors, discussion, turns
@@ -216,7 +275,7 @@ class Orchestrator:
                 query=query,
                 turns=turns,
                 final_response=final,
-                rounds_completed=self.rounds,
+                rounds_completed=rounds_completed,
             )
             usage_list, total_cost = self._aggregate_usage()
             result.usage = usage_list

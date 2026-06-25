@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import abc
-import re
 from collections import Counter
 from dataclasses import dataclass
 
+from .consensus import check_consensus
 from .counselor import Counselor
 from .models import TurnRecord
 from .providers.base import Message
@@ -124,23 +124,13 @@ class ConsensusChecker(SynthesisEngine):
         turns: list[TurnRecord],
     ) -> tuple[str, list[TurnRecord]]:
         judge = counselors[self.synthesizer_index % len(counselors)]
-        check_prompt = (
-            "Has the council reached clear consensus? "
-            "Reply YES if they largely agree, or NO if significant disagreement remains."
+        check_round = (max(t.round for t in turns) if turns else 0) + 1
+        agreed, _verdict, consensus_turn = await check_consensus(
+            judge, discussion, check_round
         )
-        verdict = await judge.respond(
-            list(discussion) + [Message(role="user", content=check_prompt)]
-        )
-        extra_turns: list[TurnRecord] = [
-            TurnRecord(
-                counselor_name=judge.name,
-                model=judge.provider.model_name,
-                round=(max(t.round for t in turns) if turns else 0) + 1,
-                content=f"Consensus check: {verdict}",
-            )
-        ]
+        extra_turns: list[TurnRecord] = [consensus_turn]
 
-        if re.search(r"\byes\b", verdict, re.IGNORECASE):
+        if agreed:
             last_round = max(t.round for t in turns) if turns else 0
             last_responses = [t for t in turns if t.round == last_round]
             if last_responses:
